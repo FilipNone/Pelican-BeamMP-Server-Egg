@@ -1,0 +1,122 @@
+{
+  "_comment": "BeamMP Server egg for Pelican/Pterodactyl",
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "exported_at": "2026-06-22T00:00:00+00:00",
+  "name": "BeamMP Server",
+  "author": "filipnone",
+  "description": "Multiplayer for BeamNG.Drive. You can find detailed instructions on the BeamMP Wiki",
+  "features": null,
+  "docker_images": {
+    "Debian": "ghcr.io/parkervcp/yolks:debian"
+  },
+  "file_denylist": [],
+  "startup": "./BeamMP-Server",
+  "config": {
+    "files": "{\r\n \"ServerConfig.toml\": {\r\n  \"parser\": \"file\",\r\n  \"find\": {\r\n   \"Name =\": \"Name = \\\"{{env.NAME}}\\\"\",\r\n   \"Port =\": \"Port = {{server.build.default.port}}\",\r\n   \"AuthKey =\": \"AuthKey = \\\"{{env.AUTHKEY}}\\\"\",\r\n   \"Private =\": \"Private = {{env.PRIVATE}}\",\r\n   \"MaxPlayers =\": \"MaxPlayers = {{env.MAX_PLAYERS}}\",\r\n   \"Description =\": \"Description = \\\"{{env.DESCRIPTION}}\\\"\",\r\n   \"MaxCars =\": \"MaxCars = {{env.MAX_CARS}}\",\r\n   \"Map =\": \"Map = \\\"{{env.MAP}}\\\"\",\r\n   \"LogChat =\": \"LogChat = {{env.LOGCHAT}}\"\r\n  }\r\n }\r\n}",
+    "startup": "{\r\n \"done\": \"[INFO] Vehicle data network online\"\r\n}",
+    "logs": "{}",
+    "stop": "exit"
+  },
+  "scripts": {
+    "installation": {
+      "script": "#!/bin/bash\n# BeamMP Server Installation Script (Fixed)\nset -e\n\nmkdir -p /mnt/server\ncd /mnt/server\n\n# --- Detect architecture ---\nARCH=$(uname -m)\ncase \"$ARCH\" in\n  x86_64)  ARCH_NAME=\"x86_64\" ;;\n  aarch64) ARCH_NAME=\"arm64\" ;;\n  *) echo \"Unsupported architecture: $ARCH\"; exit 1 ;;\nesac\n\n# --- Install runtime dependencies ---\n# liblua5.3 is REQUIRED by BeamMP-Server binary.\necho \"Installing runtime dependencies (liblua5.3, curl, jq)...\"\napt-get update -y\napt-get install -y liblua5.3-0 curl jq ca-certificates\n\n# --- Remove any old binary ---\nrm -f BeamMP-Server\n\n# --- Fetch release metadata from GitHub API ---\nLATEST_JSON=$(curl --silent \"https://api.github.com/repos/BeamMP/BeamMP-Server/releases/latest\")\nRELEASES=$(curl --silent    \"https://api.github.com/repos/BeamMP/BeamMP-Server/releases\")\n\n# --- Determine host distro version (best-effort) ---\nUBUNTU_VER=\"\"\nif [ -f /etc/os-release ]; then\n  . /etc/os-release\n  UBUNTU_VER=\"$VERSION_ID\"\nfi\n\n# --- Asset selection with smart fallback chain ---\n# Priority: Ubuntu matching host -> newest Ubuntu -> newest Debian\nselect_asset() {\n  local RELEASE_JSON=\"$1\"\n  local URLS\n  URLS=$(echo \"$RELEASE_JSON\" | jq -r '.assets[].browser_download_url' 2>/dev/null)\n\n  local PATTERNS=(\n    \"BeamMP-Server.ubuntu.${UBUNTU_VER}.${ARCH_NAME}\"\n    \"BeamMP-Server.ubuntu.24.04.${ARCH_NAME}\"\n    \"BeamMP-Server.ubuntu.22.04.${ARCH_NAME}\"\n    \"BeamMP-Server.debian.13.${ARCH_NAME}\"\n    \"BeamMP-Server.debian.12.${ARCH_NAME}\"\n  )\n\n  for PATTERN in \"${PATTERNS[@]}\"; do\n    # Skip empty patterns (when UBUNTU_VER is empty)\n    [ -z \"$PATTERN\" ] && continue\n    local HIT\n    HIT=$(echo \"$URLS\" | grep -F \"$PATTERN\" | head -n1)\n    if [ -n \"$HIT\" ]; then\n      echo \"$HIT\"\n      return 0\n    fi\n  done\n  return 1\n}\n\n# --- Resolve version ---\nDOWNLOAD_URL=\"\"\nif [ -z \"${VERSION}\" ] || [ \"${VERSION}\" == \"latest\" ]; then\n  echo \"Using latest BeamMP server release\"\n  DOWNLOAD_URL=$(select_asset \"$LATEST_JSON\" || true)\nelse\n  echo \"Requested version: ${VERSION}\"\n  VERSION_CHECK=$(echo \"$RELEASES\" | jq -r --arg V \"${VERSION}\" '.[] | select(.tag_name==$V) | .tag_name')\n  if [ \"${VERSION}\" == \"${VERSION_CHECK}\" ]; then\n    DOWNLOAD_URL=$(select_asset \"$(echo \"$RELEASES\" | jq -c --arg V \"${VERSION}\" '.[] | select(.tag_name==$V)')\" || true)\n  else\n    echo \"Version '${VERSION}' not found, falling back to latest\"\n    DOWNLOAD_URL=$(select_asset \"$LATEST_JSON\" || true)\n  fi\nfi\n\nif [ -z \"$DOWNLOAD_URL\" ]; then\n  echo \"ERROR: No compatible BeamMP binary found for arch=${ARCH_NAME}\"\n  exit 1\nfi\n\necho \"Downloading: ${DOWNLOAD_URL}\"\ncurl -sSL -o BeamMP-Server \"${DOWNLOAD_URL}\"\nchmod +x BeamMP-Server\n\n# --- Create default ServerConfig.toml ---\ncat > ServerConfig.toml <<'EOF'\n# BeamMP-Server config\n# Docs: https://wiki.beammp.com/en/home/server-maintenance\n# Get your AuthKey at https://keymaster.beammp.com\n\n[General]\nName = 'BeamMP Server'\nPort = 30814\nAuthKey = ''\nLogChat = true\nTags = 'Freeroam'\nDebug = false\nPrivate = true\nMaxCars = 1\nMaxPlayers = 8\nMap = '/levels/gridmap_v2/info.json'\nDescription = 'BeamMP Default Description'\nResourceFolder = 'Resources'\n\n[Misc]\nImScaredOfUpdates = false\nSendErrorsShowMessage = true\nSendErrors = true\nEOF\n\n# --- Create required directories ---\nmkdir -p Resources\n\necho \"-----------------------------------------\"\necho \"Installation completed\"\necho \"Binary: $(ls -lh BeamMP-Server | awk '{print $5}')\"\necho \"-----------------------------------------\"\n",
+      "container": "ghcr.io/parkervcp/installers:debian",
+      "entrypoint": "bash"
+    }
+  },
+  "variables": [
+    {
+      "name": "Server Name",
+      "description": "The name of your server. Shown on the public server list.",
+      "env_variable": "NAME",
+      "default_value": "BeamMP Server",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:128",
+      "field_type": "text"
+    },
+    {
+      "name": "Server Description",
+      "description": "Description shown on the public server list.",
+      "env_variable": "DESCRIPTION",
+      "default_value": "BeamMP Default Description",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:128",
+      "field_type": "text"
+    },
+    {
+      "name": "BeamMP Version",
+      "description": "BeamMP server version to install. Invalid values fall back to latest. See https://github.com/BeamMP/BeamMP-Server/releases",
+      "env_variable": "VERSION",
+      "default_value": "latest",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:12",
+      "field_type": "text"
+    },
+    {
+      "name": "Authentication Key",
+      "description": "BeamMP AuthKey from https://keymaster.beammp.com",
+      "env_variable": "AUTHKEY",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:64",
+      "field_type": "text"
+    },
+    {
+      "name": "Max Players",
+      "description": "Maximum number of players allowed on the server.",
+      "env_variable": "MAX_PLAYERS",
+      "default_value": "6",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|integer|max:100",
+      "field_type": "text"
+    },
+    {
+      "name": "Private Server",
+      "description": "Hide the server from the public list.",
+      "env_variable": "PRIVATE",
+      "default_value": "false",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:true,false",
+      "field_type": "text"
+    },
+    {
+      "name": "Max Cars",
+      "description": "Maximum cars per player.",
+      "env_variable": "MAX_CARS",
+      "default_value": "1",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|integer|max:10",
+      "field_type": "text"
+    },
+    {
+      "name": "Map",
+      "description": "Stock map path. Examples: /levels/gridmap_v2/info.json, /levels/automation_test_track/info.json, /levels/east_coast_usa/info.json, /levels/hirochi_raceway/info.json, /levels/italy/info.json, /levels/jungle_rock_island/info.json, /levels/industrial/info.json, /levels/small_island/info.json, /levels/smallgrid/info.json, /levels/utah/info.json, /levels/west_coast_usa/info.json, /levels/driver_training/info.json, /levels/derby/info.json",
+      "env_variable": "MAP",
+      "default_value": "/levels/gridmap_v2/info.json",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|max:64",
+      "field_type": "text"
+    },
+    {
+      "name": "Log Chat",
+      "description": "Enable chat logging in the console.",
+      "env_variable": "LOGCHAT",
+      "default_value": "true",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|string|in:true,false",
+      "field_type": "text"
+    }
+  ]
+}
